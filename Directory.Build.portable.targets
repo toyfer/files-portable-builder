@@ -1,0 +1,29 @@
+<!-- Late import: $(OutputType) is known. Class libs must NOT set WindowsAppSDKSelfContained. -->
+<Project>
+  <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true'">
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <AppxPackage>false</AppxPackage>
+    <AppxBundle>Never</AppxBundle>
+    <DefineConstants>$(DefineConstants);FILES_PORTABLE</DefineConstants>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+    <UseSatoriCoreLibOverride>false</UseSatoriCoreLibOverride>
+    <UseSatoriNativeRuntimeOverride>false</UseSatoriNativeRuntimeOverride>
+  </PropertyGroup>
+
+  <!-- Libraries / anything that is not an executable -->
+  <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true' and '$(OutputType)' != 'WinExe' and '$(OutputType)' != 'Exe'">
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!-- App + Server executables only -->
+  <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true' and ('$(OutputType)' == 'WinExe' or '$(OutputType)' == 'Exe')">
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+</Project>
