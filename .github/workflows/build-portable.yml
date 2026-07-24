@@ -85,6 +85,19 @@ jobs:
           & "${{ github.workspace }}\builder\scripts\Apply-PortablePatches.ps1" `
             -RepoRoot "${{ github.workspace }}\Files" `
             -BuilderRoot "${{ github.workspace }}\builder"
+          & "${{ github.workspace }}\builder\scripts\Patch-ServerLog.ps1" `
+            -RepoRoot "${{ github.workspace }}\Files"
+
+      - name: Verify no Helpers leak into Server
+        shell: pwsh
+        run: |
+          $hits = Get-ChildItem "${{ github.workspace }}\Files\src\Files.App.Server" -Filter *.cs -Recurse -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'Files\.App\.Helpers|PortableAppContext'
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host $_.ToString() }
+            throw 'PortableAppContext must not appear in Files.App.Server'
+          }
+          Write-Host 'OK no Helpers leak'
 
       - name: Record versions
         shell: pwsh
