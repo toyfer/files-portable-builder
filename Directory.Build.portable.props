@@ -8,5 +8,11 @@
     <!-- Ensure neutral culture resources are found by XAML compiler -->
     <DefaultLanguage>en-US</DefaultLanguage>
     <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+    <!-- WASDK 1.6 enables default Page/ApplicationDefinition item globbing.
+         Files.App already explicitly lists all .xaml files, so disable defaults
+         to avoid NETSDK1022 duplicate item errors. -->
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <EnableDefaultApplicationDefinitionItems>false</EnableDefaultApplicationDefinitionItems>
+    <EnableDefaultXamlItems>false</EnableDefaultXamlItems>
   </PropertyGroup>
 </Project>
