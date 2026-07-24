@@ -26,13 +26,13 @@ if (-not (Test-Path $propsSrc)) { throw "Missing $propsSrc" }
 
 Copy-Item -Force $propsSrc (Join-Path $RepoRoot 'Directory.Build.portable.props')
 
-# Always install PortableAppContext (required for both git-apply and scripted paths)
+# Always install PortableAppContext
 $ctxDstDir = Join-Path $RepoRoot 'src\Files.App\Helpers\Application'
 New-Item -ItemType Directory -Force -Path $ctxDstDir | Out-Null
 Copy-Item -Force $ctxSrc (Join-Path $ctxDstDir 'PortableAppContext.cs')
 Write-Step 'Installed PortableAppContext.cs'
 
-# Import portable props from Directory.Build.props
+# Import portable props
 $dbp = Join-Path $RepoRoot 'Directory.Build.props'
 $dbpText = Get-Content -Raw -LiteralPath $dbp
 if ($dbpText -notmatch 'Directory\.Build\.portable\.props') {
@@ -46,7 +46,7 @@ if ($dbpText -notmatch 'Directory\.Build\.portable\.props') {
     }
 }
 
-# Prefer unified patch if present and applies cleanly
+# Optional full patch file
 $usedGitPatch = $false
 if (Test-Path $patchFile) {
     Write-Step 'Trying git apply...'
@@ -56,7 +56,6 @@ if (Test-Path $patchFile) {
         if ($LASTEXITCODE -eq 0) {
             $usedGitPatch = $true
             Write-Step 'git apply succeeded'
-            # Re-copy context in case patch overwrote with older content
             Copy-Item -Force $ctxSrc (Join-Path $ctxDstDir 'PortableAppContext.cs')
         } else {
             Write-Warning "git apply exit $LASTEXITCODE — falling back to scripted patch"
@@ -158,38 +157,44 @@ if (-not $usedGitPatch) {
     }
 }
 
-# WindowEx: avoid static ApplicationData.Current field init crash when unpackaged
+# WindowEx: neutralize field init; skip placement save/restore when portable
 $winEx = Join-Path $RepoRoot 'src\Files.App\Data\Items\WindowEx.cs'
 if (Test-Path $winEx) {
     $wt = Get-Content -Raw $winEx
+    $orig = $wt
+
+    if ($wt -notmatch 'using Files\.App\.Helpers') {
+        $wt = $wt.Replace('using Windows.Storage;', "using Windows.Storage;`r`nusing Files.App.Helpers;")
+    }
+
     if ($wt -match 'private readonly ApplicationDataContainer _applicationDataContainer = ApplicationData\.Current\.LocalSettings') {
-        if ($wt -notmatch 'using Files\.App\.Helpers') {
-            $wt = $wt.Replace('using Windows.Storage;', "using Windows.Storage;`r`nusing Files.App.Helpers;")
-        }
         $wt = $wt.Replace(
             'private readonly ApplicationDataContainer _applicationDataContainer = ApplicationData.Current.LocalSettings;',
-            '// Portable-safe: do not touch ApplicationData at field init time')
-        # Best-effort: wrap remaining _applicationDataContainer usages is complex; replace GetDataStore if classic shape exists
-        if ($wt -match 'private IPropertySet GetDataStore' -and $wt -notmatch 'PortableAppContext\.IsPortable') {
-            Write-Warning 'WindowEx GetDataStore still needs portable path — attempting keyword replace of leftover ApplicationData.Current.LocalSettings for runtime calls only where still present as field usages'
-        }
-        # Remove leftover field references by using ApplicationData only when packaged via helper calls
-        $wt = $wt -replace '_applicationDataContainer\.Containers', 'Windows.Storage.ApplicationData.Current.LocalSettings.Containers'
-        $wt = $wt -replace '_applicationDataContainer\.Values', 'Windows.Storage.ApplicationData.Current.LocalSettings.Values'
-        $wt = $wt -replace '_applicationDataContainer\.CreateContainer', 'Windows.Storage.ApplicationData.Current.LocalSettings.CreateContainer'
-        # Guard GetDataStore body start
-        if ($wt -match 'private IPropertySet GetDataStore\(out bool oldDataExists, bool useNewStore = true\)\s*\{' -and $wt -notmatch 'if \(PortableAppContext\.IsPortable\)') {
-            $wt = [regex]::Replace($wt,
-                '(private IPropertySet GetDataStore\(out bool oldDataExists, bool useNewStore = true\)\s*\{)',
-                "`$1`r`n`t`t`toldDataExists = false;`r`n`t`t`tif (PortableAppContext.IsPortable)`r`n`t`t`t`tthrow new NotSupportedException(`"Window placement persistence simplified on portable; open an issue if needed`");")
-            # Actually throwing is bad — better skip. Use simpler approach: early return empty dictionary isn't IPropertySet easy.
-            # Re-read: better leave ApplicationData calls only when not portable by wrapping each block is hard.
-            # Simplest fix for CI: if portable, don't call GetDataStore paths - but Save/Restore call it.
-            # Revert throw approach — instead leave ApplicationData and catch in DetectPackaged only for Package.
-            # Window placement using ApplicationData fails unpackaged. Replace GetDataStore entirely via marker.
-        }
+            'private ApplicationDataContainer? _applicationDataContainer => PortableAppContext.IsPackaged ? Windows.Storage.ApplicationData.Current.LocalSettings : null;')
+    }
+
+    # Early-out placement methods when portable (avoid ApplicationData)
+    if ($wt -match 'void SaveWindowPlacement' -and $wt -notmatch 'SaveWindowPlacement[\s\S]{0,200}IsPortable') {
+        $wt = [regex]::Replace($wt,
+            '(private void SaveWindowPlacement[^\r\n]*\r?\n\s*\{)',
+            "`$1`r`n`t`t`tif (PortableAppContext.IsPortable) return;")
+    }
+    if ($wt -match 'void RestoreWindowPlacement' -and $wt -notmatch 'RestoreWindowPlacement[\s\S]{0,200}IsPortable') {
+        $wt = [regex]::Replace($wt,
+            '(private void RestoreWindowPlacement[^\r\n]*\r?\n\s*\{)',
+            "`$1`r`n`t`t`tif (PortableAppContext.IsPortable) return;")
+    }
+
+    # Null-safe GetDataStore if field became nullable property
+    if ($wt -match 'GetDataStore' -and $wt -match '_applicationDataContainer' -and $wt -notmatch 'GetDataStore[\s\S]{0,120}IsPortable') {
+        $wt = [regex]::Replace($wt,
+            '(private IPropertySet GetDataStore\(out bool oldDataExists, bool useNewStore = true\)\s*\{)',
+            "`$1`r`n`t`t`toldDataExists = false;`r`n`t`t`tif (PortableAppContext.IsPortable || _applicationDataContainer is null)`r`n`t`t`t`treturn Windows.Storage.ApplicationData.Current.LocalSettings.Values; // unused on portable (callers return early)")
+    }
+
+    if ($wt -ne $orig) {
         Set-Content -LiteralPath $winEx -Value $wt -Encoding UTF8 -NoNewline
-        Write-Step 'WindowEx field init neutralized'
+        Write-Step 'WindowEx portable-hardened'
     }
 }
 
@@ -203,9 +208,8 @@ if ($appText -match '<SelfContained>false</SelfContained>') {
     Write-Step 'Files.App.csproj self-contained toggles'
 }
 
-# EnableMsixTooling off when portable
-if ($appText -match '<EnableMsixTooling>true</EnableMsixTooling>') {
-    $appText2 = Get-Content -Raw $appCsproj
+$appText2 = Get-Content -Raw $appCsproj
+if ($appText2 -match '<EnableMsixTooling>true</EnableMsixTooling>') {
     $appText2 = $appText2.Replace('<EnableMsixTooling>true</EnableMsixTooling>', '<EnableMsixTooling Condition="''$(FILES_PORTABLE_BUILD)'' != ''true''">true</EnableMsixTooling><EnableMsixTooling Condition="''$(FILES_PORTABLE_BUILD)'' == ''true''">false</EnableMsixTooling>')
     Set-Content -LiteralPath $appCsproj -Value $appText2 -Encoding UTF8 -NoNewline
     Write-Step 'EnableMsixTooling conditional'
