@@ -36,6 +36,7 @@ on:
       - 'scripts/**'
       - 'patches/**'
       - 'Directory.Build.portable.props'
+      - 'Directory.Build.portable.targets'
 
 permissions:
   contents: write
@@ -82,6 +83,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          & "${{ github.workspace }}\builder\scripts\Ensure-PortableImports.ps1" `
+            -RepoRoot "${{ github.workspace }}\Files" `
+            -BuilderRoot "${{ github.workspace }}\builder"
           & "${{ github.workspace }}\builder\scripts\Apply-PortablePatches.ps1" `
             -RepoRoot "${{ github.workspace }}\Files" `
             -BuilderRoot "${{ github.workspace }}\builder"
@@ -89,6 +93,10 @@ jobs:
             -RepoRoot "${{ github.workspace }}\Files"
           & "${{ github.workspace }}\builder\scripts\Fix-RemainingPortable.ps1" `
             -RepoRoot "${{ github.workspace }}\Files"
+          # Re-assert imports after patches (Apply may rewrite Directory.Build.props)
+          & "${{ github.workspace }}\builder\scripts\Ensure-PortableImports.ps1" `
+            -RepoRoot "${{ github.workspace }}\Files" `
+            -BuilderRoot "${{ github.workspace }}\builder"
 
       - name: Verify no Helpers leak into Server
         shell: pwsh
@@ -100,6 +108,10 @@ jobs:
             throw 'PortableAppContext must not appear in Files.App.Server'
           }
           Write-Host 'OK no Helpers leak'
+          Write-Host '--- Directory.Build.targets ---'
+          Get-Content "${{ github.workspace }}\Files\Directory.Build.targets" -ErrorAction SilentlyContinue
+          Write-Host '--- portable.targets head ---'
+          Get-Content "${{ github.workspace }}\Files\Directory.Build.portable.targets" -TotalCount 40
 
       - name: Record versions
         shell: pwsh
@@ -141,8 +153,8 @@ jobs:
             "``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
             "$_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
             if (Test-Path $log) {
-              Write-Host "===== error CS / error lines =====" -ForegroundColor Yellow
-              $errs = Select-String -Path $log -Pattern 'error CS|error MSB|: error ' | Select-Object -First 100
+              Write-Host "===== error lines =====" -ForegroundColor Yellow
+              $errs = Select-String -Path $log -Pattern 'error CS|error MSB|: error |should not be applied' | Select-Object -First 100
               $errs | ForEach-Object { Write-Host $_.Line; $_.Line | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
               Write-Host "===== tail =====" -ForegroundColor Yellow
               Get-Content $log -Tail 80 | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
