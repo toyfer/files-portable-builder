@@ -46,18 +46,32 @@ function Invoke-DotNetLogged {
 
     $output = & dotnet @DotNetArguments 2>&1
     $code = $LASTEXITCODE
+    $lines = @()
     foreach ($line in $output) {
         $s = "$line"
+        $lines += $s
         Write-Host $s
         Add-Content -Path $LogPath -Value $s -Encoding utf8
     }
 
     if ($code -ne 0) {
+        $errLines = $lines | Where-Object {
+            $_ -match 'error CS|error MSB|: error |should not be applied|XamlCompiler error|WMC\d+|BUILD FAILED'
+        } | Select-Object -First 40
+
         Write-Host "----- matching errors -----" -ForegroundColor Yellow
-        $output | ForEach-Object { "$_" } | Select-String -Pattern 'error CS|error MSB|: error |BUILD FAILED|should not be applied' | ForEach-Object { Write-Host $_.Line -ForegroundColor Red }
-        Write-Host "----- last 40 lines -----" -ForegroundColor Yellow
-        $output | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
-        throw "dotnet failed (exit $code): $cmdLine"
+        $errLines | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+        Write-Host "----- last 30 lines -----" -ForegroundColor Yellow
+        $lines | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
+
+        $errText = if ($errLines) { ($errLines -join "`n") } else { ($lines | Select-Object -Last 25) -join "`n" }
+        throw @"
+dotnet failed (exit $code)
+Command: $cmdLine
+--- errors ---
+$errText
+--- end ---
+"@
     }
 }
 
@@ -81,10 +95,13 @@ $env:FILES_PORTABLE_BUILD = 'true'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
 
-# Ensure portable props are in place (CI also copies, but be safe)
 $portableProps = Join-Path $PSScriptRoot '..\Directory.Build.portable.props'
+$portableTargets = Join-Path $PSScriptRoot '..\Directory.Build.portable.targets'
 if (Test-Path $portableProps) {
     Copy-Item -Force $portableProps (Join-Path $RepoRoot 'Directory.Build.portable.props')
+}
+if (Test-Path $portableTargets) {
+    Copy-Item -Force $portableTargets (Join-Path $RepoRoot 'Directory.Build.portable.targets')
 }
 
 $appProj = Join-Path $RepoRoot 'src\Files.App\Files.App.csproj'
@@ -92,9 +109,8 @@ $serverProj = Join-Path $RepoRoot 'src\Files.App.Server\Files.App.Server.csproj'
 if (-not (Test-Path $appProj)) { throw "Missing $appProj" }
 if (-not (Test-Path $serverProj)) { throw "Missing $serverProj" }
 
-# Common flags — DO NOT pass WindowsAppSDKSelfContained / SelfContained here:
-# global -p: properties flow to class libraries and WASDK errors out.
-# Directory.Build.portable.props enables them only for WinExe/Exe.
+# DO NOT pass WindowsAppSDKSelfContained / SelfContained as global -p: (breaks class libs).
+# Directory.Build.portable.targets sets them only for WinExe/Exe.
 $common = @(
     "-p:Platform=$platform"
     '-p:FILES_PORTABLE_BUILD=true'
@@ -131,7 +147,7 @@ Invoke-DotNetLogged -DotNetArguments (@(
     '-v:n'
 ) + $common)
 
-Write-Host "==> Publish App (unpackaged; self-contained via Directory.Build.portable.props for WinExe only)"
+Write-Host "==> Publish App"
 Invoke-DotNetLogged -DotNetArguments (@(
     'publish', $appProj,
     '-c', $Configuration,
