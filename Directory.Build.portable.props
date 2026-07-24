@@ -1,27 +1,9 @@
-<!-- Portable / unpackaged overlay. Imported when FILES_PORTABLE_BUILD=true -->
-<!-- WindowsAppSDKSelfContained MUST NOT apply to class libraries (WASDK Base.targets error). -->
+<!-- Early props only. Self-contained flags live in Directory.Build.portable.targets
+     so they see the final $(OutputType) and do not apply to class libraries. -->
 <Project>
-  <!-- Shared portable flags for all projects -->
   <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true'">
-    <WindowsPackageType>None</WindowsPackageType>
-    <EnableMsixTooling>false</EnableMsixTooling>
-    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
-    <AppxPackage>false</AppxPackage>
-    <AppxBundle>Never</AppxBundle>
     <DefineConstants>$(DefineConstants);FILES_PORTABLE</DefineConstants>
-    <PublishSingleFile>false</PublishSingleFile>
     <UseSatoriCoreLibOverride>false</UseSatoriCoreLibOverride>
     <UseSatoriNativeRuntimeOverride>false</UseSatoriNativeRuntimeOverride>
-    <!-- Default: libraries stay framework-dependent for WASDK -->
-    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
-    <SelfContained>false</SelfContained>
-    <PublishReadyToRun>false</PublishReadyToRun>
-  </PropertyGroup>
-
-  <!-- Only the app / server executables bundle runtimes -->
-  <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true' and ('$(OutputType)' == 'WinExe' or '$(OutputType)' == 'Exe')">
-    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <SelfContained>true</SelfContained>
-    <PublishReadyToRun>false</PublishReadyToRun>
   </PropertyGroup>
 </Project>
