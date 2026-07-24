@@ -117,18 +117,46 @@ jobs:
           Pop-Location
 
       - name: Build portable folder
+        id: build
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
-          & "${{ github.workspace }}\builder\build\Build-Portable.ps1" `
-            -Arch "${{ env.ARCH }}" `
-            -Configuration "${{ env.CONFIG }}" `
-            -RepoRoot "${{ github.workspace }}\Files" `
-            -OutputDir $out
-          Copy-Item "${{ github.workspace }}\versions.txt" (Join-Path $out 'BUILD_INFO.txt') -Force
+          $log = Join-Path "${{ github.workspace }}" "build.log"
+          try {
+            & "${{ github.workspace }}\builder\build\Build-Portable.ps1" `
+              -Arch "${{ env.ARCH }}" `
+              -Configuration "${{ env.CONFIG }}" `
+              -RepoRoot "${{ github.workspace }}\Files" `
+              -OutputDir $out `
+              -LogPath $log
+            if (Test-Path $out) {
+              Copy-Item "${{ github.workspace }}\versions.txt" (Join-Path $out 'BUILD_INFO.txt') -Force -ErrorAction SilentlyContinue
+            }
+          } catch {
+            Write-Host "BUILD FAILED: $_" -ForegroundColor Red
+            if (Test-Path $log) {
+              Write-Host "===== error CS / error lines =====" -ForegroundColor Yellow
+              Select-String -Path $log -Pattern 'error CS|error MSB|: error ' | Select-Object -First 80 | ForEach-Object { $_.Line }
+              Write-Host "===== tail =====" -ForegroundColor Yellow
+              Get-Content $log -Tail 100
+            }
+            throw
+          }
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-win-${{ env.ARCH }}
+          path: |
+            build.log
+            out/**/build.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Smoke-check output
+        if: success()
         shell: pwsh
         run: |
           $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
@@ -142,6 +170,7 @@ jobs:
           Write-Host "OK Files.exe present. Total size ~$size MB"
 
       - name: Upload artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Files-Portable-win-${{ env.ARCH }}
@@ -151,6 +180,7 @@ jobs:
           compression-level: 6
 
       - name: Zip for download/release
+        if: success()
         shell: pwsh
         run: |
           $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
@@ -160,6 +190,7 @@ jobs:
           Write-Host "zip=$zip size=$((Get-Item $zip).Length)"
 
       - name: Upload ZIP artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Files-Portable-win-${{ env.ARCH }}-zip
@@ -168,7 +199,7 @@ jobs:
           retention-days: 30
 
       - name: Create GitHub Release
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.inputs.create_release == 'true' || github.event.inputs.create_release == true)
+        if: success() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.inputs.create_release == 'true' || github.event.inputs.create_release == true)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: portable-${{ github.run_number }}-win-${{ env.ARCH }}
