@@ -54,7 +54,7 @@ function Invoke-DotNetLogged {
 
     if ($code -ne 0) {
         Write-Host "----- matching errors -----" -ForegroundColor Yellow
-        $output | ForEach-Object { "$_" } | Select-String -Pattern 'error CS|error MSB|: error |BUILD FAILED' | ForEach-Object { Write-Host $_.Line -ForegroundColor Red }
+        $output | ForEach-Object { "$_" } | Select-String -Pattern 'error CS|error MSB|: error |BUILD FAILED|should not be applied' | ForEach-Object { Write-Host $_.Line -ForegroundColor Red }
         Write-Host "----- last 40 lines -----" -ForegroundColor Yellow
         $output | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
         throw "dotnet failed (exit $code): $cmdLine"
@@ -81,74 +81,65 @@ $env:FILES_PORTABLE_BUILD = 'true'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
 
+# Ensure portable props are in place (CI also copies, but be safe)
+$portableProps = Join-Path $PSScriptRoot '..\Directory.Build.portable.props'
+if (Test-Path $portableProps) {
+    Copy-Item -Force $portableProps (Join-Path $RepoRoot 'Directory.Build.portable.props')
+}
+
 $appProj = Join-Path $RepoRoot 'src\Files.App\Files.App.csproj'
 $serverProj = Join-Path $RepoRoot 'src\Files.App.Server\Files.App.Server.csproj'
 if (-not (Test-Path $appProj)) { throw "Missing $appProj" }
 if (-not (Test-Path $serverProj)) { throw "Missing $serverProj" }
 
-Write-Host "==> Restore Server + App"
-Invoke-DotNetLogged -DotNetArguments @(
-    'restore', $serverProj,
-    "-p:Platform=$platform",
-    '-p:FILES_PORTABLE_BUILD=true',
-    '-v:n'
-)
-Invoke-DotNetLogged -DotNetArguments @(
-    'restore', $appProj,
-    "-p:Platform=$platform",
-    '-p:FILES_PORTABLE_BUILD=true',
-    '-v:n'
+# Common flags — DO NOT pass WindowsAppSDKSelfContained / SelfContained here:
+# global -p: properties flow to class libraries and WASDK errors out.
+# Directory.Build.portable.props enables them only for WinExe/Exe.
+$common = @(
+    "-p:Platform=$platform"
+    '-p:FILES_PORTABLE_BUILD=true'
+    '-p:WindowsPackageType=None'
+    '-p:EnableMsixTooling=false'
+    '-p:GenerateAppxPackageOnBuild=false'
+    '-p:AppxBundle=Never'
+    '-p:PublishTrimmed=false'
+    '-p:PublishReadyToRun=false'
+    '-p:PublishReadyToRunComposite=false'
 )
 
-# Build Server into default bin so Files.App CsWinRT can find .winmd
+Write-Host "==> Restore Server + App"
+Invoke-DotNetLogged -DotNetArguments (@('restore', $serverProj) + $common + @('-v:n'))
+Invoke-DotNetLogged -DotNetArguments (@('restore', $appProj) + $common + @('-v:n'))
+
 Write-Host "==> Build Server (bin layout for winmd)"
-Invoke-DotNetLogged -DotNetArguments @(
+Invoke-DotNetLogged -DotNetArguments (@(
     'build', $serverProj,
     '-c', $Configuration,
-    "-p:Platform=$platform",
     "-p:RuntimeIdentifier=$rid",
-    '-p:FILES_PORTABLE_BUILD=true',
-    '-p:SelfContained=true',
-    '-p:PublishTrimmed=false',
     '--no-restore',
     '-v:n'
-)
+) + $common)
 
 Write-Host "==> Publish Server"
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-Invoke-DotNetLogged -DotNetArguments @(
+Invoke-DotNetLogged -DotNetArguments (@(
     'publish', $serverProj,
     '-c', $Configuration,
-    "-p:Platform=$platform",
     "-p:RuntimeIdentifier=$rid",
-    '-p:SelfContained=true',
-    '-p:FILES_PORTABLE_BUILD=true',
-    '-p:PublishReadyToRun=false',
-    '-p:PublishTrimmed=false',
     '--no-restore',
     '-o', (Join-Path $OutputDir '_server_pub'),
     '-v:n'
-)
+) + $common)
 
-Write-Host "==> Publish App (unpackaged, WASDK self-contained)"
-Invoke-DotNetLogged -DotNetArguments @(
+Write-Host "==> Publish App (unpackaged; self-contained via Directory.Build.portable.props for WinExe only)"
+Invoke-DotNetLogged -DotNetArguments (@(
     'publish', $appProj,
     '-c', $Configuration,
-    "-p:Platform=$platform",
     "-p:RuntimeIdentifier=$rid",
-    '-p:WindowsPackageType=None',
-    '-p:WindowsAppSDKSelfContained=true',
-    '-p:SelfContained=true',
-    '-p:EnableMsixTooling=false',
-    '-p:FILES_PORTABLE_BUILD=true',
-    '-p:PublishReadyToRun=false',
-    '-p:PublishReadyToRunComposite=false',
-    '-p:GenerateAppxPackageOnBuild=false',
-    '-p:AppxBundle=Never',
     '--no-restore',
     '-o', $OutputDir,
     '-v:n'
-)
+) + $common)
 
 $serverPub = Join-Path $OutputDir '_server_pub'
 if (Test-Path $serverPub) {
