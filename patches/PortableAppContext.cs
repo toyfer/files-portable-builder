@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 // Portable / unpackaged support (folder-local data + no package registration).
 
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using Windows.ApplicationModel;
@@ -12,7 +15,7 @@ namespace Files.App.Helpers;
 /// <summary>
 /// Paths and lightweight settings for unpackaged (portable) builds.
 /// When packaged, defers to Windows.Storage.ApplicationData / Package.Current.
-/// When unpackaged, keeps everything under &lt;exe-dir&gt;\Data\ (or FILES_PORTABLE_DATA).
+/// When unpackaged, keeps everything under exe-dir\Data\ (or FILES_PORTABLE_DATA).
 /// </summary>
 internal static class PortableAppContext
 {
