@@ -26,34 +26,56 @@ if (-not $OutputDir) {
     $OutputDir = Join-Path $RepoRoot "artifacts\Files-Portable-$Arch"
 }
 if (-not $LogPath) {
-    $LogPath = Join-Path ([IO.Path]::GetTempPath()) "files-portable-build-$Arch.log"
+    $LogPath = Join-Path $PSScriptRoot "build-$Arch.log"
+    if (-not (Test-Path (Split-Path $LogPath -Parent))) {
+        $LogPath = Join-Path ([IO.Path]::GetTempPath()) "files-portable-build-$Arch.log"
+    }
 }
 
 $rid = "win-$Arch"
 $platform = $Arch
 
-function Invoke-DotNet {
-    param([string[]]$Args)
-    Write-Host ("==> dotnet " + ($Args -join ' ')) -ForegroundColor Cyan
-    & dotnet @Args 2>&1 | Tee-Object -FilePath $LogPath -Append
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "----- last 80 log lines -----" -ForegroundColor Yellow
-        if (Test-Path $LogPath) {
-            Get-Content $LogPath -Tail 80 | ForEach-Object { Write-Host $_ }
-        }
-        throw "dotnet failed ($LASTEXITCODE): $($Args -join ' ')"
+function Invoke-DotNetLogged {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$DotNetArguments
+    )
+    $cmdLine = 'dotnet ' + ($DotNetArguments -join ' ')
+    Write-Host "==> $cmdLine" -ForegroundColor Cyan
+    Add-Content -Path $LogPath -Value "==> $cmdLine" -Encoding utf8
+
+    $output = & dotnet @DotNetArguments 2>&1
+    $code = $LASTEXITCODE
+    foreach ($line in $output) {
+        $s = "$line"
+        Write-Host $s
+        Add-Content -Path $LogPath -Value $s -Encoding utf8
+    }
+
+    if ($code -ne 0) {
+        Write-Host "----- matching errors -----" -ForegroundColor Yellow
+        $output | ForEach-Object { "$_" } | Select-String -Pattern 'error CS|error MSB|: error |BUILD FAILED' | ForEach-Object { Write-Host $_.Line -ForegroundColor Red }
+        Write-Host "----- last 40 lines -----" -ForegroundColor Yellow
+        $output | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
+        throw "dotnet failed (exit $code): $cmdLine"
     }
 }
 
-"==== Files portable build $(Get-Date -Format o) ====" | Set-Content -Path $LogPath -Encoding utf8
-"RepoRoot=$RepoRoot" | Add-Content $LogPath
-"RID=$rid Platform=$platform Config=$Configuration" | Add-Content $LogPath
-"Output=$OutputDir" | Add-Content $LogPath
+@"
+==== Files portable build $(Get-Date -Format o) ====
+RepoRoot=$RepoRoot
+RID=$rid Platform=$platform Config=$Configuration
+Output=$OutputDir
+Log=$LogPath
+PSVersion=$($PSVersionTable.PSVersion)
+"@ | Set-Content -Path $LogPath -Encoding utf8
 
 Write-Host "RepoRoot: $RepoRoot"
 Write-Host "RID: $rid | Platform: $platform | Config: $Configuration"
 Write-Host "Output: $OutputDir"
 Write-Host "Log: $LogPath"
+Write-Host "dotnet: $((Get-Command dotnet).Source)"
+& dotnet --info 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host $_; Add-Content $LogPath $_ }
 
 $env:FILES_PORTABLE_BUILD = 'true'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
@@ -62,47 +84,43 @@ $env:DOTNET_NOLOGO = '1'
 $appProj = Join-Path $RepoRoot 'src\Files.App\Files.App.csproj'
 $serverProj = Join-Path $RepoRoot 'src\Files.App.Server\Files.App.Server.csproj'
 if (-not (Test-Path $appProj)) { throw "Missing $appProj" }
-
-# Ensure windows workload pieces if available (best-effort)
-try {
-    Write-Host "==> Workload list (best-effort)"
-    & dotnet workload list 2>&1 | Tee-Object -FilePath $LogPath -Append | Out-Null
-} catch {}
+if (-not (Test-Path $serverProj)) { throw "Missing $serverProj" }
 
 Write-Host "==> Restore Server + App"
-Invoke-DotNet @(
+Invoke-DotNetLogged -DotNetArguments @(
     'restore', $serverProj,
-    '-p:Platform=' + $platform,
+    "-p:Platform=$platform",
     '-p:FILES_PORTABLE_BUILD=true',
     '-v:n'
 )
-Invoke-DotNet @(
+Invoke-DotNetLogged -DotNetArguments @(
     'restore', $appProj,
-    '-p:Platform=' + $platform,
+    "-p:Platform=$platform",
     '-p:FILES_PORTABLE_BUILD=true',
     '-v:n'
 )
 
-# Build Server into default bin layout so Files.App CsWinRT can find the .winmd
+# Build Server into default bin so Files.App CsWinRT can find .winmd
 Write-Host "==> Build Server (bin layout for winmd)"
-Invoke-DotNet @(
+Invoke-DotNetLogged -DotNetArguments @(
     'build', $serverProj,
     '-c', $Configuration,
-    '-p:Platform=' + $platform,
-    '-p:RuntimeIdentifier=' + $rid,
+    "-p:Platform=$platform",
+    "-p:RuntimeIdentifier=$rid",
     '-p:FILES_PORTABLE_BUILD=true',
     '-p:SelfContained=true',
+    '-p:PublishTrimmed=false',
     '--no-restore',
     '-v:n'
 )
 
 Write-Host "==> Publish Server"
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-Invoke-DotNet @(
+Invoke-DotNetLogged -DotNetArguments @(
     'publish', $serverProj,
     '-c', $Configuration,
-    '-p:Platform=' + $platform,
-    '-p:RuntimeIdentifier=' + $rid,
+    "-p:Platform=$platform",
+    "-p:RuntimeIdentifier=$rid",
     '-p:SelfContained=true',
     '-p:FILES_PORTABLE_BUILD=true',
     '-p:PublishReadyToRun=false',
@@ -113,12 +131,11 @@ Invoke-DotNet @(
 )
 
 Write-Host "==> Publish App (unpackaged, WASDK self-contained)"
-# ReadyToRun off first for CI reliability; still self-contained
-Invoke-DotNet @(
+Invoke-DotNetLogged -DotNetArguments @(
     'publish', $appProj,
     '-c', $Configuration,
-    '-p:Platform=' + $platform,
-    '-p:RuntimeIdentifier=' + $rid,
+    "-p:Platform=$platform",
+    "-p:RuntimeIdentifier=$rid",
     '-p:WindowsPackageType=None',
     '-p:WindowsAppSDKSelfContained=true',
     '-p:SelfContained=true',
@@ -127,7 +144,6 @@ Invoke-DotNet @(
     '-p:PublishReadyToRun=false',
     '-p:PublishReadyToRunComposite=false',
     '-p:GenerateAppxPackageOnBuild=false',
-    '-p:AppxPackage=false',
     '-p:AppxBundle=Never',
     '--no-restore',
     '-o', $OutputDir,
@@ -159,9 +175,11 @@ cd /d "%~dp0"
 start "" "%~dp0Files.exe" %*
 '@ | Set-Content -Path (Join-Path $OutputDir 'Files-Portable.cmd') -Encoding ASCII
 
-# Copy log next to output for artifact convenience
 Copy-Item $LogPath (Join-Path $OutputDir 'build.log') -Force -ErrorAction SilentlyContinue
-Copy-Item $LogPath (Join-Path (Split-Path $OutputDir -Parent) 'build.log') -Force -ErrorAction SilentlyContinue
+$outParent = Split-Path $OutputDir -Parent
+if ($outParent) {
+    Copy-Item $LogPath (Join-Path $outParent 'build.log') -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "DONE: $OutputDir" -ForegroundColor Green
 Write-Host "LOG:  $LogPath"
