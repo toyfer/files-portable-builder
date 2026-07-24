@@ -5,5 +5,8 @@
     <DefineConstants>$(DefineConstants);FILES_PORTABLE</DefineConstants>
     <UseSatoriCoreLibOverride>false</UseSatoriCoreLibOverride>
     <UseSatoriNativeRuntimeOverride>false</UseSatoriNativeRuntimeOverride>
+    <!-- Ensure neutral culture resources are found by XAML compiler -->
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
   </PropertyGroup>
 </Project>
