@@ -87,6 +87,8 @@ jobs:
             -BuilderRoot "${{ github.workspace }}\builder"
           & "${{ github.workspace }}\builder\scripts\Patch-ServerLog.ps1" `
             -RepoRoot "${{ github.workspace }}\Files"
+          & "${{ github.workspace }}\builder\scripts\Fix-RemainingPortable.ps1" `
+            -RepoRoot "${{ github.workspace }}\Files"
 
       - name: Verify no Helpers leak into Server
         shell: pwsh
@@ -135,12 +137,17 @@ jobs:
             }
           } catch {
             Write-Host "BUILD FAILED: $_" -ForegroundColor Red
+            "## Build failed" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            "``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            "$_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
             if (Test-Path $log) {
               Write-Host "===== error CS / error lines =====" -ForegroundColor Yellow
-              Select-String -Path $log -Pattern 'error CS|error MSB|: error ' | Select-Object -First 80 | ForEach-Object { $_.Line }
+              $errs = Select-String -Path $log -Pattern 'error CS|error MSB|: error ' | Select-Object -First 100
+              $errs | ForEach-Object { Write-Host $_.Line; $_.Line | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
               Write-Host "===== tail =====" -ForegroundColor Yellow
-              Get-Content $log -Tail 100
+              Get-Content $log -Tail 80 | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
             }
+            "``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
             throw
           }
 
