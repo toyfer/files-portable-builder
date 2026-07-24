@@ -1,0 +1,6 @@
+<!-- Override WASDK version for portable builds to avoid WMC9999 XAML compiler resource issue on .NET 10 -->
+<Project>
+  <ItemGroup>
+    <PackageVersion Update="Microsoft.WindowsAppSDK" Version="1.6.2502050022" />
+  </ItemGroup>
+</Project>
