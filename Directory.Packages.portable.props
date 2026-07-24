@@ -1,6 +1,8 @@
-<!-- Override WASDK version for portable builds to avoid WMC9999 XAML compiler resource issue on .NET 10 -->
+<!-- Override WASDK for portable builds.
+     Avoid WASDK 2.3.x WMC9999 XAML compiler resource failure on some .NET 10 runners.
+     Valid NuGet versions use 9-digit build ids, e.g. 1.6.250228001 (not ...0022). -->
 <Project>
   <ItemGroup>
-    <PackageVersion Update="Microsoft.WindowsAppSDK" Version="1.6.2502050022" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
   </ItemGroup>
 </Project>
