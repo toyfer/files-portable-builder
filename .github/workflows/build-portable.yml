@@ -23,6 +23,11 @@ on:
         options:
           - Release
           - Debug
+      create_release:
+        description: 'Create a GitHub Release with ZIP'
+        required: true
+        default: true
+        type: boolean
   push:
     branches: [main]
     paths:
@@ -84,12 +89,18 @@ jobs:
       - name: Record versions
         shell: pwsh
         run: |
-          Push-Location Files
-          "upstream=$(git rev-parse HEAD)" | Out-File -FilePath "${{ github.workspace }}\versions.txt" -Encoding utf8
-          "upstream_ref=${{ env.UPSTREAM_REF }}" | Add-Content versions.txt
-          "arch=${{ env.ARCH }}" | Add-Content "${{ github.workspace }}\versions.txt"
-          "config=${{ env.CONFIG }}" | Add-Content "${{ github.workspace }}\versions.txt"
-          Get-Content "${{ github.workspace }}\versions.txt"
+          $ErrorActionPreference = 'Stop'
+          $info = Join-Path "${{ github.workspace }}" "versions.txt"
+          Push-Location "${{ github.workspace }}\Files"
+          @(
+            "upstream=$(git rev-parse HEAD)"
+            "upstream_ref=${{ env.UPSTREAM_REF }}"
+            "arch=${{ env.ARCH }}"
+            "config=${{ env.CONFIG }}"
+            "builder_sha=${{ github.sha }}"
+            "run_id=${{ github.run_id }}"
+          ) | Set-Content -Path $info -Encoding utf8
+          Get-Content $info
           Pop-Location
 
       - name: Build portable folder
@@ -111,7 +122,7 @@ jobs:
           $exe = Join-Path $out 'Files.exe'
           if (-not (Test-Path $exe)) {
             Write-Host "Output directory listing:"
-            Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object -First 50 Name, Length
+            Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object -First 80 Name, Length
             throw "Files.exe not found in $out"
           }
           $size = [math]::Round((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
@@ -124,18 +135,27 @@ jobs:
           path: out/Files-Portable-win-${{ env.ARCH }}
           if-no-files-found: error
           retention-days: 30
+          compression-level: 6
 
-      - name: Zip for release
-        if: github.ref == 'refs/heads/main'
+      - name: Zip for download/release
         shell: pwsh
         run: |
           $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
           $zip = Join-Path "${{ github.workspace }}" "Files-Portable-win-${{ env.ARCH }}.zip"
-          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -Force
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -CompressionLevel Optimal
           Write-Host "zip=$zip size=$((Get-Item $zip).Length)"
 
-      - name: Create GitHub Release (manual dispatch on main)
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Files-Portable-win-${{ env.ARCH }}-zip
+          path: Files-Portable-win-${{ env.ARCH }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.inputs.create_release == 'true' || github.event.inputs.create_release == true)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: portable-${{ github.run_number }}-win-${{ env.ARCH }}
@@ -146,10 +166,10 @@ jobs:
             - Arch: `${{ env.ARCH }}`
             - Configuration: `${{ env.CONFIG }}`
             - Upstream ref: `${{ env.UPSTREAM_REF }}`
-            - No MSIX install required — extract and run `Files.exe`
+            - No MSIX install — extract and run `Files.exe`
             - Offline-friendly (runtimes bundled)
 
-            Built by workflow run ${{ github.run_id }}.
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           files: Files-Portable-win-${{ env.ARCH }}.zip
           generate_release_notes: false
         env:
