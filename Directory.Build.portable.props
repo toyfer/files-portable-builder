@@ -5,14 +5,10 @@
     <DefineConstants>$(DefineConstants);FILES_PORTABLE</DefineConstants>
     <UseSatoriCoreLibOverride>false</UseSatoriCoreLibOverride>
     <UseSatoriNativeRuntimeOverride>false</UseSatoriNativeRuntimeOverride>
-    <!-- Ensure neutral culture resources are found by XAML compiler -->
-    <DefaultLanguage>en-US</DefaultLanguage>
-    <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
-    <!-- WASDK 1.6 enables default Page/ApplicationDefinition item globbing.
-         Files.App already explicitly lists all .xaml files, so disable defaults
-         to avoid NETSDK1022 duplicate item errors. -->
-    <EnableDefaultPageItems>false</EnableDefaultPageItems>
-    <EnableDefaultApplicationDefinitionItems>false</EnableDefaultApplicationDefinitionItems>
-    <EnableDefaultXamlItems>false</EnableDefaultXamlItems>
+    <!-- Fix WMC9999: XamlCompiler.exe has a resource name mismatch when
+         invoked as a subprocess by dotnet msbuild (Core runtime).
+         Use the in-process XAML compiler instead (same as Visual Studio).
+         See: https://github.com/microsoft/microsoft-ui-xaml/issues/11157 -->
+    <UseXamlCompilerExecutable>false</UseXamlCompilerExecutable>
   </PropertyGroup>
 </Project>
