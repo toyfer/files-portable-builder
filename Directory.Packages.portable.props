@@ -1,8 +1,14 @@
 <!-- Override WASDK for portable builds.
      Avoid WASDK 2.3.x WMC9999 XAML compiler resource failure on some .NET 10 runners.
-     Valid NuGet versions use 9-digit build ids, e.g. 1.6.250228001 (not ...0022). -->
+     Pin ALL WASDK sub-packages to 1.6.x to prevent version mismatch between
+     Microsoft.WindowsAppSDK and Microsoft.WindowsAppSDK.WinUI. -->
 <Project>
   <ItemGroup>
     <PackageVersion Update="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK.WinUI" Version="1.6.250228001" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK.Foundation" Version="1.6.250228001" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="1.6.250228001" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK.AppExtensions" Version="1.6.250228001" />
+    <PackageVersion Update="Microsoft.WindowsAppSDK.Widgets" Version="1.6.250228001" />
   </ItemGroup>
 </Project>
