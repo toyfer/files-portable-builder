@@ -1,0 +1,156 @@
+name: Build Portable Files
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'files-community/Files git ref (branch, tag, or SHA)'
+        required: true
+        default: 'main'
+      arch:
+        description: 'CPU architecture'
+        required: true
+        default: 'x64'
+        type: choice
+        options:
+          - x64
+          - arm64
+      configuration:
+        description: 'Build configuration'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'build/**'
+      - 'scripts/**'
+      - 'patches/**'
+      - 'Directory.Build.portable.props'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-${{ github.ref }}-${{ github.event.inputs.arch || 'x64' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Portable ${{ github.event.inputs.arch || 'x64' }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'x64' }}
+      CONFIG: ${{ github.event.inputs.configuration || 'Release' }}
+      UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'main' }}
+      FILES_PORTABLE_BUILD: 'true'
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+        with:
+          path: builder
+
+      - name: Checkout Files upstream
+        uses: actions/checkout@v4
+        with:
+          repository: files-community/Files
+          ref: ${{ env.UPSTREAM_REF }}
+          path: Files
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: Files/global.json
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Apply portable patches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "${{ github.workspace }}\builder\scripts\Apply-PortablePatches.ps1" `
+            -RepoRoot "${{ github.workspace }}\Files" `
+            -BuilderRoot "${{ github.workspace }}\builder"
+
+      - name: Record versions
+        shell: pwsh
+        run: |
+          Push-Location Files
+          "upstream=$(git rev-parse HEAD)" | Out-File -FilePath "${{ github.workspace }}\versions.txt" -Encoding utf8
+          "upstream_ref=${{ env.UPSTREAM_REF }}" | Add-Content versions.txt
+          "arch=${{ env.ARCH }}" | Add-Content "${{ github.workspace }}\versions.txt"
+          "config=${{ env.CONFIG }}" | Add-Content "${{ github.workspace }}\versions.txt"
+          Get-Content "${{ github.workspace }}\versions.txt"
+          Pop-Location
+
+      - name: Build portable folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
+          & "${{ github.workspace }}\builder\build\Build-Portable.ps1" `
+            -Arch "${{ env.ARCH }}" `
+            -Configuration "${{ env.CONFIG }}" `
+            -RepoRoot "${{ github.workspace }}\Files" `
+            -OutputDir $out
+          Copy-Item "${{ github.workspace }}\versions.txt" (Join-Path $out 'BUILD_INFO.txt') -Force
+
+      - name: Smoke-check output
+        shell: pwsh
+        run: |
+          $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
+          $exe = Join-Path $out 'Files.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host "Output directory listing:"
+            Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object -First 50 Name, Length
+            throw "Files.exe not found in $out"
+          }
+          $size = [math]::Round((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
+          Write-Host "OK Files.exe present. Total size ~$size MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Files-Portable-win-${{ env.ARCH }}
+          path: out/Files-Portable-win-${{ env.ARCH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Zip for release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $out = Join-Path "${{ github.workspace }}" "out\Files-Portable-win-${{ env.ARCH }}"
+          $zip = Join-Path "${{ github.workspace }}" "Files-Portable-win-${{ env.ARCH }}.zip"
+          Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip -Force
+          Write-Host "zip=$zip size=$((Get-Item $zip).Length)"
+
+      - name: Create GitHub Release (manual dispatch on main)
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: portable-${{ github.run_number }}-win-${{ env.ARCH }}
+          name: Portable Files (win-${{ env.ARCH }}) #${{ github.run_number }}
+          body: |
+            Unpackaged self-contained portable build of [Files](https://github.com/files-community/Files).
+
+            - Arch: `${{ env.ARCH }}`
+            - Configuration: `${{ env.CONFIG }}`
+            - Upstream ref: `${{ env.UPSTREAM_REF }}`
+            - No MSIX install required — extract and run `Files.exe`
+            - Offline-friendly (runtimes bundled)
+
+            Built by workflow run ${{ github.run_id }}.
+          files: Files-Portable-win-${{ env.ARCH }}.zip
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,17 @@
+<!-- Portable / unpackaged overlay. Imported when FILES_PORTABLE_BUILD=true -->
+<Project>
+  <PropertyGroup Condition="'$(FILES_PORTABLE_BUILD)' == 'true'">
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <AppxPackage>false</AppxPackage>
+    <AppxBundle>Never</AppxBundle>
+    <DefineConstants>$(DefineConstants);FILES_PORTABLE</DefineConstants>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <UseSatoriCoreLibOverride>false</UseSatoriCoreLibOverride>
+    <UseSatoriNativeRuntimeOverride>false</UseSatoriNativeRuntimeOverride>
+  </PropertyGroup>
+</Project>
